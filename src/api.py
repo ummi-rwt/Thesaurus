@@ -144,3 +144,7 @@ def home():
 from usage import router as usage_router  # noqa: E402
 
 app.include_router(usage_router)
+
+from review import router as review_router  # noqa: E402
+
+app.include_router(review_router)
