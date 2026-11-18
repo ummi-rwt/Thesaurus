@@ -11,15 +11,20 @@
   form { display: flex; gap: .5rem; margin: 1.5rem 0; }
   input[type=text] { flex: 1; padding: .6rem; font-size: 1.1rem; border: 1px solid #bbb; border-radius: 6px; }
   select, button { padding: .6rem .9rem; font-size: 1rem; border-radius: 6px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
-  button { background: #2f5fd0; color: #fff; border-color: #2f5fd0; }
+  button.main { background: #2f5fd0; color: #fff; border-color: #2f5fd0; }
+  button.small { padding: .15rem .5rem; font-size: .8rem; margin-left: .5rem; }
+  button:disabled { opacity: .6; cursor: default; }
   .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
   .pos { background: #eef; border-radius: 4px; padding: .1rem .4rem; font-size: .8rem; color: #335; margin-left: .4rem; }
-  .freq, .muted { color: #888; font-size: .85rem; }
+  .freq, .muted { color: #888; font-size: .85rem; margin-left: .4rem; }
   .note { color: #555; font-size: .9rem; }
   .ex { margin: .6rem 0; }
   .ex .en { color: #666; }
   h3 { margin: 0 0 .5rem 0; }
   ul { margin: .3rem 0; padding-left: 1.2rem; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 2rem 0 1rem; }
+  .head { display: flex; justify-content: space-between; align-items: center; }
+  li.nb { margin: .4rem 0; }
 </style>
 </head>
 <body>
@@ -31,10 +36,22 @@
     <option value="fr">Français → anglais</option>
     <option value="en">Anglais → français</option>
   </select>
-  <button type="submit">Chercher</button>
+  <button type="submit" class="main">Chercher</button>
 </form>
 <div id="out"></div>
+
+<hr>
+<div class="head">
+  <h2 id="nbtitle">Mon carnet</h2> <a href="/review">R&eacute;viser &rarr;</a>
+  <select id="filter">
+    <option value="all">Tous les mots</option>
+    <option value="today">Aujourd'hui</option>
+  </select>
+</div>
+<div id="notebook"></div>
+
 <script>
+const USER = "demo";
 const POS = { verb: "verbe", noun: "nom", adj: "adjectif", adv: "adverbe",
               name: "nom propre", intj: "interjection", phrase: "expression" };
 
@@ -44,8 +61,32 @@ function el(tag, text, cls) {
   if (cls) e.className = cls;
   return e;
 }
-
 function nb(n) { return n.toLocaleString("fr-FR"); }
+
+async function api(path, options) {
+  const r = await fetch(path, options);
+  if (!r.ok) throw new Error("Erreur " + r.status);
+  return r.json();
+}
+function post(path, body) {
+  return api(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                     body: JSON.stringify(body) });
+}
+
+function saveButton(word, lang, translation) {
+  const b = el("button", "+ Carnet", "small");
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    try {
+      const r = await post("/usage/words", { user: USER, word: word, lang: lang,
+                                             translation: translation.slice(0, 300) });
+      b.textContent = r.saved ? "Ajouté ✓" : "Déjà dans le carnet";
+      b.disabled = true;
+      loadNotebook();
+    } catch (err) { b.textContent = "Erreur"; }
+  });
+  return b;
+}
 
 function renderExamples(data) {
   const box = el("div", null, "card");
@@ -67,14 +108,16 @@ function renderExamples(data) {
 function renderFr(data, out) {
   if (data.forms.length) {
     const lemmas = [...new Set(data.forms.map(f => f.lemma))].join(", ");
-    const note = el("p", "« " + data.word + " » est une forme de : " + lemmas, "note");
-    out.appendChild(note);
+    out.appendChild(el("p", "« " + data.word + " » est une forme de : " + lemmas, "note"));
   }
   data.entries.forEach(e => {
     const box = el("div", null, "card");
     const h = el("h3", e.word);
     h.appendChild(el("span", POS[e.pos] || e.pos, "pos"));
     h.appendChild(el("span", nb(e.freq) + " phrases", "freq"));
+    if (e.translations.length) {
+      h.appendChild(saveButton(e.word, "fr", e.translations.slice(0, 3).join("; ")));
+    }
     box.appendChild(h);
     const ul = el("ul");
     e.translations.forEach(t => ul.appendChild(el("li", t)));
@@ -85,8 +128,8 @@ function renderFr(data, out) {
 }
 
 function renderEn(data, out) {
-  const common = data.translations.filter(t => t.freq > 0);
-  const rare = data.translations.filter(t => t.freq === 0);
+  const common = data.translations.filter(t => t.freq >= 20);
+  const rare = data.translations.filter(t => t.freq < 20);
   const line = t => {
     const li = el("li", t.word);
     li.appendChild(el("span", POS[t.pos] || t.pos, "pos"));
@@ -94,7 +137,12 @@ function renderEn(data, out) {
     return li;
   };
   const box = el("div", null, "card");
-  box.appendChild(el("h3", "Traductions"));
+  const h = el("h3", "Traductions");
+  const best = (common.length ? common : data.translations).slice(0, 3);
+  if (best.length) {
+    h.appendChild(saveButton(data.word, "en", best.map(t => t.word).join(", ")));
+  }
+  box.appendChild(h);
   if (common.length) {
     const ul = el("ul");
     common.forEach(t => ul.appendChild(line(t)));
@@ -113,6 +161,40 @@ function renderEn(data, out) {
   out.appendChild(box);
 }
 
+async function loadNotebook() {
+  const box = document.getElementById("notebook");
+  const today = document.getElementById("filter").value === "today";
+  const day = today ? "&day=" + new Date().toISOString().slice(0, 10) : "";
+  try {
+    const data = await api("/usage/words?user=" + USER + day);
+    document.getElementById("nbtitle").textContent = "Mon carnet (" + data.count + ")";
+    box.replaceChildren();
+    if (!data.count) {
+      box.appendChild(el("p", "Aucun mot pour l'instant.", "muted"));
+      return;
+    }
+    const ul = el("ul");
+    data.words.forEach(w => {
+      const li = el("li", null, "nb");
+      li.appendChild(el("strong", w.word));
+      li.appendChild(el("span", " (" + w.lang + ") → " + w.translation));
+      const del = el("button", "Supprimer", "small");
+      del.type = "button";
+      del.addEventListener("click", async () => {
+        await api("/usage/words/" + w.id + "?user=" + USER, { method: "DELETE" });
+        loadNotebook();
+      });
+      li.appendChild(del);
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  } catch (err) {
+    box.replaceChildren(el("p", "Carnet indisponible : " + err.message, "muted"));
+  }
+}
+
+document.getElementById("filter").addEventListener("change", loadNotebook);
+
 document.getElementById("f").addEventListener("submit", async ev => {
   ev.preventDefault();
   const word = document.getElementById("word").value.trim();
@@ -120,16 +202,18 @@ document.getElementById("f").addEventListener("submit", async ev => {
   const out = document.getElementById("out");
   out.replaceChildren(el("p", "Recherche...", "muted"));
   try {
-    const r = await fetch("/lookup?word=" + encodeURIComponent(word) + "&lang=" + lang);
-    if (!r.ok) throw new Error("Erreur " + r.status);
-    const data = await r.json();
+    const data = await api("/lookup?word=" + encodeURIComponent(word) + "&lang=" + lang);
     out.replaceChildren();
     if (lang === "fr") renderFr(data, out); else renderEn(data, out);
     out.appendChild(renderExamples(data));
+    const found = lang === "fr" ? data.entries.length > 0 : data.translations.length > 0;
+    post("/usage/searches", { user: USER, word: word, lang: lang, found: found }).catch(() => {});
   } catch (err) {
     out.replaceChildren(el("p", "Problème : " + err.message, "muted"));
   }
 });
+
+loadNotebook();
 </script>
 </body>
 </html>

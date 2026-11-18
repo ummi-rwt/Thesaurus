@@ -1,0 +1,130 @@
+﻿<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thesaurus - Révision</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 520px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  a { color: #2f5fd0; text-decoration: none; }
+  .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .muted { color: #888; font-size: .9rem; }
+  .card { border: 1px solid #ddd; border-radius: 12px; padding: 2rem 1rem; margin: 1.5rem 0; text-align: center; min-height: 140px; }
+  .lang { color: #888; font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; }
+  .word { font-size: 2.2rem; margin: .6rem 0; }
+  .answer { font-size: 1.4rem; color: #2f5fd0; margin: 1rem 0 0; }
+  .row { display: flex; gap: .6rem; justify-content: center; flex-wrap: wrap; }
+  button { padding: .7rem 1.2rem; font-size: 1rem; border-radius: 8px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
+  button.main { background: #2f5fd0; color: #fff; border-color: #2f5fd0; }
+  button.bad { border-color: #c44; color: #c44; }
+  button.mid { border-color: #c80; color: #a60; }
+  button.good { border-color: #2a7; color: #186; }
+  button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Révision</h1>
+  <a href="/">← Recherche</a>
+</div>
+<p class="muted" id="status">Chargement...</p>
+<div class="card" id="card"></div>
+<div class="row" id="actions"></div>
+
+<script>
+const USER = "demo";
+const LABELS = { fr: "Français", en: "Anglais" };
+let queue = [];
+let current = null;
+let reviewed = 0;
+let retried = 0;
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined && text !== null) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
+async function api(path, options) {
+  const r = await fetch(path, options);
+  if (!r.ok) throw new Error("Erreur " + r.status);
+  return r.json();
+}
+
+function setStatus() {
+  document.getElementById("status").textContent =
+    queue.length + " carte(s) restante(s) - " + reviewed + " réussie(s)";
+}
+
+function showQuestion() {
+  const card = document.getElementById("card");
+  const actions = document.getElementById("actions");
+  card.replaceChildren();
+  actions.replaceChildren();
+  if (!queue.length) { finish(); return; }
+  current = queue[0];
+  setStatus();
+  card.appendChild(el("div", LABELS[current.lang] || current.lang, "lang"));
+  card.appendChild(el("div", current.word, "word"));
+  const flip = el("button", "Retourner", "main");
+  flip.addEventListener("click", showAnswer);
+  actions.appendChild(flip);
+}
+
+function showAnswer() {
+  const card = document.getElementById("card");
+  const actions = document.getElementById("actions");
+  card.appendChild(el("div", current.translation, "answer"));
+  actions.replaceChildren();
+  [["Raté", 1, "bad"], ["Difficile", 3, "mid"], ["Facile", 5, "good"]].forEach(([label, q, cls]) => {
+    const b = el("button", label, cls);
+    b.addEventListener("click", () => answer(q, actions));
+    actions.appendChild(b);
+  });
+}
+
+async function answer(quality, actions) {
+  actions.querySelectorAll("button").forEach(b => b.disabled = true);
+  try {
+    await api("/usage/review", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user: USER, saved_word_id: current.id, quality: quality })
+    });
+  } catch (err) {
+    document.getElementById("status").textContent = "Problème : " + err.message;
+    actions.querySelectorAll("button").forEach(b => b.disabled = false);
+    return;
+  }
+  queue.shift();
+  if (quality < 3) { queue.push(current); retried++; } else { reviewed++; }
+  showQuestion();
+}
+
+function finish() {
+  const card = document.getElementById("card");
+  card.replaceChildren();
+  document.getElementById("actions").replaceChildren();
+  document.getElementById("status").textContent = "";
+  if (!reviewed && !retried) {
+    card.appendChild(el("div", "Rien à réviser pour l'instant.", "word"));
+    card.appendChild(el("p", "Ajoute des mots à ton carnet depuis la recherche.", "muted"));
+    return;
+  }
+  card.appendChild(el("div", "Séance terminée", "word"));
+  card.appendChild(el("p", reviewed + " mot(s) réussi(s), " + retried + " nouvelle(s) tentative(s).", "muted"));
+}
+
+async function start() {
+  try {
+    const data = await api("/usage/review?user=" + USER + "&limit=50");
+    queue = data.cards;
+    showQuestion();
+  } catch (err) {
+    document.getElementById("status").textContent = "Problème : " + err.message;
+  }
+}
+start();
+</script>
+</body>
+</html>
