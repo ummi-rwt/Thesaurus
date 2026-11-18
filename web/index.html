@@ -1,0 +1,135 @@
+﻿<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thesaurus</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { margin-bottom: .2rem; }
+  .sub { color: #666; margin-top: 0; }
+  form { display: flex; gap: .5rem; margin: 1.5rem 0; }
+  input[type=text] { flex: 1; padding: .6rem; font-size: 1.1rem; border: 1px solid #bbb; border-radius: 6px; }
+  select, button { padding: .6rem .9rem; font-size: 1rem; border-radius: 6px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
+  button { background: #2f5fd0; color: #fff; border-color: #2f5fd0; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  .pos { background: #eef; border-radius: 4px; padding: .1rem .4rem; font-size: .8rem; color: #335; margin-left: .4rem; }
+  .freq, .muted { color: #888; font-size: .85rem; }
+  .note { color: #555; font-size: .9rem; }
+  .ex { margin: .6rem 0; }
+  .ex .en { color: #666; }
+  h3 { margin: 0 0 .5rem 0; }
+  ul { margin: .3rem 0; padding-left: 1.2rem; }
+</style>
+</head>
+<body>
+<h1>Thesaurus</h1>
+<p class="sub">Dictionnaire FR / EN avec phrases d'exemple</p>
+<form id="f">
+  <input type="text" id="word" placeholder="Tape un mot..." autofocus required>
+  <select id="lang">
+    <option value="fr">Français → anglais</option>
+    <option value="en">Anglais → français</option>
+  </select>
+  <button type="submit">Chercher</button>
+</form>
+<div id="out"></div>
+<script>
+const POS = { verb: "verbe", noun: "nom", adj: "adjectif", adv: "adverbe",
+              name: "nom propre", intj: "interjection", phrase: "expression" };
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined && text !== null) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
+function nb(n) { return n.toLocaleString("fr-FR"); }
+
+function renderExamples(data) {
+  const box = el("div", null, "card");
+  box.appendChild(el("h3", "Exemples"));
+  if (!data.examples.length) {
+    box.appendChild(el("p", "Aucune phrase trouvée.", "muted"));
+    return box;
+  }
+  data.examples.forEach(x => {
+    const d = el("div", null, "ex");
+    d.appendChild(el("div", x.fr));
+    d.appendChild(el("div", x.en, "en"));
+    box.appendChild(d);
+  });
+  box.appendChild(el("p", nb(data.total_examples) + " phrases contiennent ce mot.", "note"));
+  return box;
+}
+
+function renderFr(data, out) {
+  if (data.forms.length) {
+    const lemmas = [...new Set(data.forms.map(f => f.lemma))].join(", ");
+    const note = el("p", "« " + data.word + " » est une forme de : " + lemmas, "note");
+    out.appendChild(note);
+  }
+  data.entries.forEach(e => {
+    const box = el("div", null, "card");
+    const h = el("h3", e.word);
+    h.appendChild(el("span", POS[e.pos] || e.pos, "pos"));
+    h.appendChild(el("span", nb(e.freq) + " phrases", "freq"));
+    box.appendChild(h);
+    const ul = el("ul");
+    e.translations.forEach(t => ul.appendChild(el("li", t)));
+    box.appendChild(ul);
+    out.appendChild(box);
+  });
+  if (!data.entries.length) out.appendChild(el("p", "Aucune définition trouvée dans le dictionnaire.", "muted"));
+}
+
+function renderEn(data, out) {
+  const common = data.translations.filter(t => t.freq > 0);
+  const rare = data.translations.filter(t => t.freq === 0);
+  const line = t => {
+    const li = el("li", t.word);
+    li.appendChild(el("span", POS[t.pos] || t.pos, "pos"));
+    li.appendChild(el("span", nb(t.freq) + " phrases", "freq"));
+    return li;
+  };
+  const box = el("div", null, "card");
+  box.appendChild(el("h3", "Traductions"));
+  if (common.length) {
+    const ul = el("ul");
+    common.forEach(t => ul.appendChild(line(t)));
+    box.appendChild(ul);
+  } else {
+    box.appendChild(el("p", "Aucune traduction courante trouvée.", "muted"));
+  }
+  if (rare.length) {
+    const d = el("details");
+    d.appendChild(el("summary", "Moins courants (" + rare.length + ")", "muted"));
+    const ul = el("ul");
+    rare.forEach(t => ul.appendChild(line(t)));
+    d.appendChild(ul);
+    box.appendChild(d);
+  }
+  out.appendChild(box);
+}
+
+document.getElementById("f").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const word = document.getElementById("word").value.trim();
+  const lang = document.getElementById("lang").value;
+  const out = document.getElementById("out");
+  out.replaceChildren(el("p", "Recherche...", "muted"));
+  try {
+    const r = await fetch("/lookup?word=" + encodeURIComponent(word) + "&lang=" + lang);
+    if (!r.ok) throw new Error("Erreur " + r.status);
+    const data = await r.json();
+    out.replaceChildren();
+    if (lang === "fr") renderFr(data, out); else renderEn(data, out);
+    out.appendChild(renderExamples(data));
+  } catch (err) {
+    out.replaceChildren(el("p", "Problème : " + err.message, "muted"));
+  }
+});
+</script>
+</body>
+</html>
