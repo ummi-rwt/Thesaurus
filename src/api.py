@@ -153,3 +153,8 @@ app.include_router(review_router)
 @app.get("/review", include_in_schema=False)
 def review_page():
     return FileResponse("web/review.html")
+
+
+from excerpts import router as excerpts_router  # noqa: E402
+
+app.include_router(excerpts_router)

@@ -193,6 +193,28 @@ async function loadNotebook() {
   }
 }
 
+function fmt(ms) {
+  const s = Math.floor(ms / 1000);
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+async function loadExcerpts(word, lang, out) {
+  try {
+    const data = await api("/excerpts?word=" + encodeURIComponent(word) + "&lang=" + lang + "&limit=2");
+    if (!data.excerpts.length) return;
+    const box = el("div", null, "card");
+    box.appendChild(el("h3", "Dans le film"));
+    data.excerpts.forEach(x => {
+      const d = el("div", null, "ex");
+      d.appendChild(el("div", x.fr));
+      d.appendChild(el("div", x.en, "en"));
+      d.appendChild(el("div", x.film + " - " + fmt(x.start_ms) + " / " + fmt(x.end_ms), "muted"));
+      box.appendChild(d);
+    });
+    box.appendChild(el("p", data.credits.join(" | "), "note"));
+    out.appendChild(box);
+  } catch (err) { }
+}
 document.getElementById("filter").addEventListener("change", loadNotebook);
 
 document.getElementById("f").addEventListener("submit", async ev => {
@@ -206,6 +228,7 @@ document.getElementById("f").addEventListener("submit", async ev => {
     out.replaceChildren();
     if (lang === "fr") renderFr(data, out); else renderEn(data, out);
     out.appendChild(renderExamples(data));
+    loadExcerpts(word, lang, out);
     const found = lang === "fr" ? data.entries.length > 0 : data.translations.length > 0;
     post("/usage/searches", { user: USER, word: word, lang: lang, found: found }).catch(() => {});
   } catch (err) {
@@ -217,3 +240,4 @@ loadNotebook();
 </script>
 </body>
 </html>
+
