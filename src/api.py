@@ -140,3 +140,7 @@ def search(word: str, lang: str = "fr", limit: int = 5):
 @app.get("/", include_in_schema=False)
 def home():
     return FileResponse("web/index.html")
+
+from usage import router as usage_router  # noqa: E402
+
+app.include_router(usage_router)
