@@ -22,6 +22,11 @@ def check_lang(lang):
         raise HTTPException(status_code=400, detail="lang doit valoir fr ou en")
 
 
+def get_freq(con, word):
+    row = con.execute("SELECT n FROM word_freq WHERE word = ?", (word.lower(),)).fetchone()
+    return row[0] if row else 0
+
+
 def get_examples(con, word, lang, limit):
     text_col = "fr_text" if lang == "fr" else "en_text"
     cols = "{fr_text fr_lemmas}" if lang == "fr" else "{en_text en_lemmas}"
@@ -40,50 +45,58 @@ def get_examples(con, word, lang, limit):
 
 
 def french_entries(con, word):
-    lemmas = con.execute(
-        "SELECT DISTINCT lemma FROM forms WHERE lower(form) = ?", (word,)
+    forms_rows = con.execute(
+        "SELECT lemma, pos, description FROM forms WHERE lower(form) = ?", (word,)
     ).fetchall()
-    forms_info = con.execute(
-        "SELECT lemma, description FROM forms WHERE lower(form) = ? LIMIT 6", (word,)
-    ).fetchall()
-    candidates = [word] + [l[0] for l in lemmas]
+    forms_info = [{"lemma": l, "description": d} for l, _, d in forms_rows[:6]]
+    lemma_pos = sorted({(l.lower(), p) for l, p, _ in forms_rows})
+
     entries, seen = [], set()
-    for cand in candidates:
+
+    def add(wid, w, pos):
+        if wid in seen:
+            return
+        seen.add(wid)
+        glosses = [
+            g[0]
+            for g in con.execute(
+                "SELECT gloss FROM translations WHERE word_id = ? ORDER BY rank", (wid,)
+            )
+        ]
+        entries.append(
+            {"word": w, "pos": pos, "freq": get_freq(con, w), "translations": glosses}
+        )
+
+    for wid, w, pos in con.execute(
+        "SELECT id, word, pos FROM words WHERE lower(word) = ? ORDER BY id", (word,)
+    ).fetchall():
+        add(wid, w, pos)
+    for lemma, lpos in lemma_pos:
         for wid, w, pos in con.execute(
-            "SELECT id, word, pos FROM words WHERE lower(word) = ? ORDER BY id",
-            (cand.lower(),),
+            "SELECT id, word, pos FROM words WHERE lower(word) = ? AND pos = ? ORDER BY id",
+            (lemma, lpos),
         ).fetchall():
-            if wid in seen:
-                continue
-            seen.add(wid)
-            glosses = [
-                g[0]
-                for g in con.execute(
-                    "SELECT gloss FROM translations WHERE word_id = ? ORDER BY rank",
-                    (wid,),
-                )
-            ]
-            entries.append({"word": w, "pos": pos, "translations": glosses})
-    return entries, [
-        {"lemma": l, "description": d} for l, d in forms_info
-    ]
+            add(wid, w, pos)
+    return entries, forms_info
 
 
 def english_entries(con, word):
     rows = con.execute(
-        """SELECT w.word, w.pos, t.gloss FROM translations t
+        """SELECT w.word, w.pos, t.gloss, COALESCE(f.n, 0) AS freq
+           FROM translations t
            JOIN words w ON w.id = t.word_id
+           LEFT JOIN word_freq f ON f.word = lower(w.word)
            WHERE lower(t.gloss) = :w OR lower(t.gloss) = 'to ' || :w
               OR lower(t.gloss) LIKE :w || ', %'
               OR lower(t.gloss) LIKE '%, ' || :w
               OR lower(t.gloss) LIKE '%, ' || :w || ',%'
            ORDER BY
               CASE WHEN lower(t.gloss) IN (:w, 'to ' || :w) THEN 0 ELSE 1 END,
-              t.rank, w.id
+              freq DESC, t.rank, w.id
            LIMIT 30""",
         {"w": word},
     ).fetchall()
-    return [{"word": w, "pos": pos, "gloss": g} for w, pos, g in rows]
+    return [{"word": w, "pos": p, "gloss": g, "freq": n} for w, p, g, n in rows]
 
 
 @app.get("/lookup")
