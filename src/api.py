@@ -158,3 +158,8 @@ def review_page():
 from excerpts import router as excerpts_router  # noqa: E402
 
 app.include_router(excerpts_router)
+
+
+from video import router as video_router  # noqa: E402
+
+app.include_router(video_router)
